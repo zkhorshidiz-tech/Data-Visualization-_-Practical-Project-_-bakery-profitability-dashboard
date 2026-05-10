@@ -1242,11 +1242,327 @@ except Exception:
 """**32. Interactive European Profitability Dashboard**"""
 
 # =========================================================
-# Purpose: Update and display dashboard using existing filters
+# Interactive European Profitability Dashboard
+# Purpose: Create, display, filter, and save the dashboard
+# Run this after Figure 31
 # =========================================================
 
 from IPython.display import clear_output
 from html import escape
+
+try:
+    from google.colab import output
+    output.enable_custom_widget_manager()
+except Exception:
+    pass
+
+# -----------------------------
+# Dashboard filters
+# -----------------------------
+
+country_filter_dash = widgets.Dropdown(
+    options=['All'] + sorted(df_clean['Country'].dropna().unique().tolist()),
+    value='All',
+    description='Country:',
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width='220px')
+)
+
+year_filter_dash = widgets.Dropdown(
+    options=['All'] + sorted(df_clean['Year'].dropna().unique().tolist()),
+    value='All',
+    description='Year:',
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width='180px')
+)
+
+product_filter_dash = widgets.SelectMultiple(
+    options=sorted(df_clean['Confectionary'].dropna().unique().tolist()),
+    value=tuple(sorted(df_clean['Confectionary'].dropna().unique().tolist())),
+    description='Confectionary:',
+    style={'description_width': 'initial'},
+    layout=widgets.Layout(width='300px', height='140px')
+)
+
+# -----------------------------
+# Helper functions
+# -----------------------------
+
+def filter_dashboard_data(country, year, products):
+    dff = df_clean.copy()
+
+    if country != 'All':
+        dff = dff[dff['Country'] == country]
+
+    if year != 'All':
+        dff = dff[dff['Year'] == year]
+
+    if products:
+        dff = dff[dff['Confectionary'].isin(list(products))]
+
+    return dff
+
+
+def make_plot_html(fig, include_js=False):
+    return fig.to_html(
+        full_html=False,
+        include_plotlyjs='cdn' if include_js else False,
+        default_width='100%'
+    )
+
+
+def render_dashboard(country='All', year='All', products=None):
+    if products is None:
+        products = tuple(sorted(df_clean['Confectionary'].dropna().unique().tolist()))
+
+    dff = filter_dashboard_data(country, year, products)
+
+    if len(products) == 0:
+        return "<b>Please select at least one confectionary type.</b>"
+
+    if dff.empty:
+        return "<b>No data available for the selected filters.</b>"
+
+    total_revenue = dff['Revenue(£)'].sum()
+    total_profit = dff['Profit(£)'].sum()
+    avg_margin = dff['Profit Margin (%)'].mean()
+    avg_cost_ratio = dff['Cost-to-Revenue Ratio (%)'].mean()
+    total_units = dff['Units Sold'].sum()
+
+    title_html = f"""
+    <div style="text-align:center; margin:15px 0 20px 0;">
+        <h2 style="color:#2c3e50; margin-bottom:6px;">
+            European Bakery Profitability Dashboard
+        </h2>
+        <p style="color:#555; font-size:15px; margin-top:0;">
+            Profit-focused dashboard filtered by country, year, and confectionary type
+        </p>
+        <p style="color:#777; font-size:13px;">
+            Current view: <b>Country:</b> {country} |
+            <b>Year:</b> {year} |
+            <b>Products selected:</b> {len(products)}
+        </p>
+    </div>
+    """
+
+    kpi_html = f"""
+    <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:12px; margin:10px 0 25px 0;">
+        <div style="background:#1f77b4; padding:16px; border-radius:14px; text-align:center; color:white;">
+            <h4>Total Revenue (£)</h4><h2>{total_revenue:,.0f}</h2>
+        </div>
+        <div style="background:#2ca02c; padding:16px; border-radius:14px; text-align:center; color:white;">
+            <h4>Total Profit (£)</h4><h2>{total_profit:,.0f}</h2>
+        </div>
+        <div style="background:#ff7f0e; padding:16px; border-radius:14px; text-align:center; color:white;">
+            <h4>Average Margin (%)</h4><h2>{avg_margin:.2f}%</h2>
+        </div>
+        <div style="background:#9467bd; padding:16px; border-radius:14px; text-align:center; color:white;">
+            <h4>Cost-to-Revenue (%)</h4><h2>{avg_cost_ratio:.2f}%</h2>
+        </div>
+        <div style="background:#34495e; padding:16px; border-radius:14px; text-align:center; color:white;">
+            <h4>Units Sold</h4><h2>{total_units:,.0f}</h2>
+        </div>
+    </div>
+    """
+
+    map_data_dash = dff.groupby(
+        ['City', 'Country', 'Latitude', 'Longitude'],
+        as_index=False
+    ).agg(
+        Total_Revenue=('Revenue(£)', 'sum'),
+        Total_Profit=('Profit(£)', 'sum'),
+        Average_Profit_Margin=('Profit Margin (%)', 'mean'),
+        Units_Sold=('Units Sold', 'sum')
+    )
+
+    city_profit_dash = dff.groupby(
+        'City',
+        as_index=False
+    )['Profit(£)'].sum().sort_values('Profit(£)', ascending=False)
+
+    product_profit_dash = dff.groupby(
+        'Confectionary',
+        as_index=False
+    )['Profit(£)'].sum().sort_values('Profit(£)', ascending=False)
+
+    margin_dash = dff.groupby(
+        'Confectionary',
+        as_index=False
+    )['Profit Margin (%)'].mean().sort_values('Profit Margin (%)', ascending=False)
+
+    heatmap_dash = dff.pivot_table(
+        values='Profit(£)',
+        index='City',
+        columns='Confectionary',
+        aggfunc='sum',
+        observed=True
+    )
+
+    trend_dash = dff.groupby(
+        ['Year', 'Month', 'Month_Name'],
+        as_index=False,
+        observed=True
+    )['Profit(£)'].sum().sort_values(['Year', 'Month'])
+
+    fig_map = px.scatter_geo(
+        map_data_dash,
+        lat='Latitude',
+        lon='Longitude',
+        size='Total_Profit',
+        color='Average_Profit_Margin',
+        text='City',
+        hover_name='City',
+        hover_data={
+            'Country': True,
+            'Total_Revenue': ':,.0f',
+            'Total_Profit': ':,.0f',
+            'Average_Profit_Margin': ':.2f',
+            'Units_Sold': ':,.0f',
+            'Latitude': False,
+            'Longitude': False
+        },
+        title='European Profit Distribution by City',
+        labels={
+            'Total_Profit': 'Total Profit (£)',
+            'Average_Profit_Margin': 'Average Profit Margin (%)'
+        },
+        color_continuous_scale='Viridis',
+        size_max=35,
+        template=TEMPLATE
+    )
+
+    fig_map.update_traces(textposition='top center')
+    fig_map.update_geos(
+        scope='europe',
+        projection_type='natural earth',
+        showland=True,
+        landcolor='rgb(240, 240, 240)',
+        showcountries=True,
+        countrycolor='rgb(160, 160, 160)',
+        showocean=True,
+        oceancolor='rgb(220, 235, 247)',
+        fitbounds='locations'
+    )
+    fig_map.update_layout(height=560, title_x=0.5)
+
+    fig_city = px.bar(
+        city_profit_dash,
+        x='City',
+        y='Profit(£)',
+        color='City',
+        text='Profit(£)',
+        title='Total Profit by City',
+        labels={'Profit(£)': 'Total Profit (£)'},
+        color_discrete_sequence=COLOR_SEQ,
+        template=TEMPLATE
+    )
+    fig_city.update_traces(texttemplate='£%{text:,.0f}', textposition='outside')
+    fig_city.update_layout(height=430, showlegend=False)
+
+    fig_product = px.bar(
+        product_profit_dash,
+        x='Confectionary',
+        y='Profit(£)',
+        color='Confectionary',
+        text='Profit(£)',
+        title='Total Profit by Confectionary Type',
+        labels={'Profit(£)': 'Total Profit (£)'},
+        color_discrete_sequence=COLOR_SEQ,
+        template=TEMPLATE
+    )
+    fig_product.update_traces(texttemplate='£%{text:,.0f}', textposition='outside')
+    fig_product.update_layout(height=430, showlegend=False)
+
+    fig_margin = px.bar(
+        margin_dash,
+        x='Confectionary',
+        y='Profit Margin (%)',
+        color='Confectionary',
+        text='Profit Margin (%)',
+        title='Average Profit Margin by Confectionary Type',
+        labels={'Profit Margin (%)': 'Average Profit Margin (%)'},
+        color_discrete_sequence=COLOR_SEQ,
+        template=TEMPLATE
+    )
+    fig_margin.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+    fig_margin.update_layout(height=430, showlegend=False)
+
+    fig_heatmap = px.imshow(
+        heatmap_dash,
+        text_auto='.0f',
+        aspect='auto',
+        title='Profit Heatmap by City and Confectionary Type',
+        labels=dict(color='Total Profit (£)'),
+        template=TEMPLATE
+    )
+    fig_heatmap.update_layout(height=460)
+
+    fig_trend = px.line(
+        trend_dash,
+        x='Month_Name',
+        y='Profit(£)',
+        color='Year',
+        markers=True,
+        title='Monthly Profit Trend by Year',
+        labels={
+            'Profit(£)': 'Total Profit (£)',
+            'Month_Name': 'Month'
+        },
+        template=TEMPLATE
+    )
+    fig_trend.update_layout(height=460)
+
+    tiles = [
+        ("European Profit Distribution Map", make_plot_html(fig_map, include_js=True), True),
+        ("Total Profit by City", make_plot_html(fig_city), False),
+        ("Total Profit by Confectionary Type", make_plot_html(fig_product), False),
+        ("Average Profit Margin by Product", make_plot_html(fig_margin), False),
+        ("Profit Heatmap by City and Product", make_plot_html(fig_heatmap), False),
+        ("Monthly Profit Trend", make_plot_html(fig_trend), True)
+    ]
+
+    tile_html = ""
+    for title, chart_html, full_width in tiles:
+        full_class = "grid-column:1/-1;" if full_width else ""
+        tile_html += f"""
+        <div style="{full_class} background:white; padding:14px; border-radius:16px;
+                    box-shadow:0 3px 12px rgba(0,0,0,0.08);">
+            <h3 style="text-align:center; color:#2c3e50;">{title}</h3>
+            {chart_html}
+        </div>
+        """
+
+    body_html = f"""
+    <div style="background:#f8fafc; padding:20px; font-family:Arial, sans-serif;">
+        <div style="max-width:1250px; margin:0 auto;">
+            {title_html}
+            {kpi_html}
+            <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:18px;">
+                {tile_html}
+            </div>
+        </div>
+    </div>
+    """
+
+    full_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>European Bakery Profitability Dashboard</title>
+    </head>
+    <body style="margin:0; background:#f8fafc;">
+        {body_html}
+    </body>
+    </html>
+    """
+
+    return full_html
+
+
+# -----------------------------
+# Dashboard display and save
+# -----------------------------
 
 dashboard_output = widgets.Output()
 
@@ -1260,31 +1576,22 @@ def update_dashboard_view(button=None):
     with dashboard_output:
         clear_output(wait=True)
 
-        selected_products = tuple(product_filter_dash.value)
-
-        if len(selected_products) == 0:
-            display(HTML("<b>Please select at least one confectionary type.</b>"))
-            return
-
-        file_path = "/content/dashboard_current_view.html"
-
-        render_dashboard(
+        html = render_dashboard(
             country=country_filter_dash.value,
             year=year_filter_dash.value,
-            products=selected_products,
-            save_file=file_path
+            products=tuple(product_filter_dash.value)
         )
 
-        clear_output(wait=True)
+        with open("/content/dashboard_current_view.html", "w", encoding="utf-8") as f:
+            f.write(html)
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
+        print("Dashboard saved as: /content/dashboard_current_view.html")
 
         display(HTML(f"""
         <iframe
-            srcdoc="{escape(html_content)}"
+            srcdoc="{escape(html)}"
             width="100%"
-            height="1300"
+            height="1400"
             style="border:1px solid #ddd; border-radius:12px;">
         </iframe>
         """))
@@ -1301,62 +1608,3 @@ display(widgets.HBox([
 display(dashboard_output)
 
 update_dashboard_view()
-
-"""**33. Dashboard Default View - Save HTML**"""
-
-# =========================================================
-# Purpose: Display and save the default dashboard view
-# =========================================================
-
-render_dashboard(
-    country='All',
-    year='All',
-    products=tuple(sorted(df_clean['Confectionary'].unique().tolist())),
-    save_file="dashboard_default_view.html"
-)
-
-"""**34. Dashboard Filtered View**"""
-
-# =========================================================
-# Purpose: Display a filtered dashboard view for screenshot evidence
-# =========================================================
-
-render_dashboard(    country='Germany',    year=2000,
-
-products=tuple(sorted(df_clean['Confectionary'].unique().tolist())),
-                save_file="dashboard_filtered_germany_2000.html")
-
-# =========================================================
-# 35. Zip All Figure Outputs
-# Purpose: Compress all exported figure and dashboard PNG files into one ZIP file
-# =========================================================
-
-import os
-import glob
-import zipfile
-from google.colab import files
-
-zip_filename = "/content/bakery_visualisation_figures.zip"
-
-# Find all exported PNG figures and dashboard images
-figure_files = glob.glob("/content/figure_*.png")
-dashboard_files = glob.glob("/content/dashboard_*.png")
-
-all_files = figure_files + dashboard_files
-
-print("Files found:")
-for file in all_files:
-    print(os.path.basename(file))
-
-if len(all_files) == 0:
-    print("No PNG files found. Please make sure figures were saved first.")
-else:
-    with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for file in all_files:
-            zipf.write(file, arcname=os.path.basename(file))
-
-    print(f"\nZIP file created successfully: {zip_filename}")
-    print(f"Total files zipped: {len(all_files)}")
-
-    # Download the ZIP file
-    files.download(zip_filename)
